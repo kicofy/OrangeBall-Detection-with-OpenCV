@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 
 latest_frame_bgr = None  # updated each frame for mouse picking
+latest_picked_lab = None  # persists last picked color in Lab for ΔE mask
 
 
 def create_trackbar_window(
@@ -22,16 +23,25 @@ def create_trackbar_window(
     upper_h, _, _ = initial_upper_hsv
 
     # Simple controls: center/width for H, minimums for S/V
-    default_h_center = int((lower_h + upper_h) // 2)
-    default_h_width = int(max(1, (upper_h - lower_h) // 2))
+    # Defaults tuned for your current setup
+    default_h_center = 7
+    default_h_width = 2
+    default_s_min = 180
+    default_v_min = 215
 
     cv2.createTrackbar("H center", "Controls", default_h_center, 179, lambda x: None)
     cv2.createTrackbar("H width", "Controls", default_h_width, 60, lambda x: None)
-    cv2.createTrackbar("S min", "Controls", lower_s, 255, lambda x: None)
-    cv2.createTrackbar("V min", "Controls", lower_v, 255, lambda x: None)
+    cv2.createTrackbar("S min", "Controls", default_s_min, 255, lambda x: None)
+    cv2.createTrackbar("V min", "Controls", default_v_min, 255, lambda x: None)
 
     # Optional morphology strength (0 disables)
     cv2.createTrackbar("Morph (0-5)", "Controls", 1, 5, lambda x: None)
+
+    # Lighting tolerance to handle highlights/shadows on glossy spheres
+    cv2.createTrackbar("Light tol (0-3)", "Controls", 2, 3, lambda x: None)
+    # LAB distance mask controls
+    cv2.createTrackbar("DE tol (10-50)", "Controls", 25, 50, lambda x: None)
+    cv2.createTrackbar("Use LAB (0/1)", "Controls", 1, 1, lambda x: None)
 
     # Picker mode (fallback for mac trackpad modifier issues)
     cv2.createTrackbar("Pick mode (0/1)", "Controls", 0, 1, lambda x: None)
@@ -115,7 +125,7 @@ def on_mouse_original(event: int, x: int, y: int, flags: int, userdata) -> None:
     """
     Shift + Left Click on Original window: center HSV thresholds on clicked pixel.
     """
-    global latest_frame_bgr
+    global latest_frame_bgr, latest_picked_lab
 
     if event == cv2.EVENT_LBUTTONUP:
         shift_down = (flags & cv2.EVENT_FLAG_SHIFTKEY) != 0
@@ -129,6 +139,8 @@ def on_mouse_original(event: int, x: int, y: int, flags: int, userdata) -> None:
 
         bgr = latest_frame_bgr[y, x].reshape(1, 1, 3)
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).reshape(3,)
+        # persist LAB center for ΔE mask
+        latest_picked_lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).reshape(3,).astype(np.int16)
         # Use half of current width as shrink step for hue, and fixed S/V deltas
         current_width = max(1, cv2.getTrackbarPos("H width", "Controls"))
         dh = max(2, current_width // 2)
@@ -154,12 +166,18 @@ def compute_circularity(contour: np.ndarray) -> float:
 
 
 def find_circle_like_regions(
-    mask_binary: np.ndarray, min_area_px: int, min_circularity: float
+    mask_binary: np.ndarray,
+    min_area_px: int,
+    min_circularity: float,
+    min_fill_ratio: float = 0.6,
+    min_axis_ratio: float = 0.75,
 ) -> list[dict]:
     """
-    Find circle-like regions from a binary mask using contours and circularity.
-    Returns a list of detections with bbox and score:
-        [{ "bbox": (x, y, w, h), "score": circularity, "contour": contour }, ...]
+    Find circle-like regions from a binary mask using several geometric tests:
+    - circularity (4*pi*A/P^2)
+    - fill ratio versus minimum enclosing circle area
+    - axis ratio from bounding box (w/h close to 1)
+    Returns list of detections with bbox and composite score in [0,1].
     """
     contours, _ = cv2.findContours(mask_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -168,14 +186,32 @@ def find_circle_like_regions(
         area = cv2.contourArea(contour)
         if area < max(0, int(min_area_px)):
             continue
+
+        x, y, w, h = cv2.boundingRect(contour)
+        if w <= 0 or h <= 0:
+            continue
+        axis_ratio = float(min(w, h)) / float(max(w, h))
+        if axis_ratio < min_axis_ratio:
+            continue
+
         circularity = compute_circularity(contour)
         if circularity < min_circularity:
             continue
-        x, y, w, h = cv2.boundingRect(contour)
+
+        (cx, cy), radius = cv2.minEnclosingCircle(contour)
+        circle_area = float(np.pi * radius * radius)
+        if circle_area <= 0.0:
+            continue
+        fill_ratio = float(area) / circle_area
+        if fill_ratio < min_fill_ratio:
+            continue
+
+        # Composite score: weighted average
+        score = float(0.5 * circularity + 0.3 * fill_ratio + 0.2 * axis_ratio)
         detections.append(
             {
                 "bbox": (int(x), int(y), int(w), int(h)),
-                "score": float(circularity),
+                "score": max(0.0, min(1.0, score)),
                 "contour": contour,
             }
         )
@@ -233,6 +269,101 @@ def apply_morphology(mask: np.ndarray, strength: int) -> np.ndarray:
     return cleaned
 
 
+def build_lighting_robust_mask(frame_hsv: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
+    """
+    Union of three HSV masks to cover highlights and shadows on glossy objects:
+    - main:   [H_low, S_min, V_min] .. [H_high, 255, 255]
+    - hilite: relax saturation lower bound
+    - shadow: relax value(lower V) bound
+    Relaxation amounts depend on "Light tol (0-3)".
+    """
+    h_low, s_min, v_min = int(lower[0]), int(lower[1]), int(lower[2])
+    h_high = int(upper[0])
+
+    tol = cv2.getTrackbarPos("Light tol (0-3)", "Controls")
+    # Map tolerance to relax amounts
+    s_relax = [0, 25, 45, 65][min(max(0, tol), 3)]
+    v_relax = [0, 25, 45, 65][min(max(0, tol), 3)]
+
+    # Base range
+    lower_main = np.array([h_low, s_min, v_min], dtype=np.uint8)
+    upper_main = np.array([h_high, 255, 255], dtype=np.uint8)
+    mask_main = cv2.inRange(frame_hsv, lower_main, upper_main)
+
+    # Highlight (desaturated bright spots)
+    lower_hilite = np.array([h_low, max(0, s_min - s_relax), v_min], dtype=np.uint8)
+    upper_hilite = np.array([h_high, 255, 255], dtype=np.uint8)
+    mask_hilite = cv2.inRange(frame_hsv, lower_hilite, upper_hilite)
+
+    # Shadow (darker but still orange)
+    lower_shadow = np.array([h_low, s_min, max(0, v_min - v_relax)], dtype=np.uint8)
+    upper_shadow = np.array([h_high, 255, 255], dtype=np.uint8)
+    mask_shadow = cv2.inRange(frame_hsv, lower_shadow, upper_shadow)
+
+    mask = cv2.bitwise_or(mask_main, mask_hilite)
+    mask = cv2.bitwise_or(mask, mask_shadow)
+    return mask
+
+
+def build_lab_deltae_mask(frame_bgr: np.ndarray) -> np.ndarray | None:
+    """
+    Build a ΔE (CIE76) mask around the last picked Lab color.
+    Returns None if no color has been picked or Use LAB is disabled.
+    """
+    if cv2.getTrackbarPos("Use LAB (0/1)", "Controls") == 0:
+        return None
+    global latest_picked_lab
+    if latest_picked_lab is None:
+        return None
+    tol = cv2.getTrackbarPos("DE tol (10-50)", "Controls")
+    tol = max(1, int(tol))
+
+    lab_img = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB).astype(np.int16)
+    # compute Euclidean distance in Lab space
+    dL = lab_img[:, :, 0] - int(latest_picked_lab[0])
+    da = lab_img[:, :, 1] - int(latest_picked_lab[1])
+    db = lab_img[:, :, 2] - int(latest_picked_lab[2])
+    dist = np.sqrt(dL.astype(np.float32) ** 2 + da.astype(np.float32) ** 2 + db.astype(np.float32) ** 2)
+    mask = (dist <= float(tol)).astype(np.uint8) * 255
+    return mask
+
+
+def _compute_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ax2, ay2 = ax + aw, ay + ah
+    bx2, by2 = bx + bw, by + bh
+    inter_x1 = max(ax, bx)
+    inter_y1 = max(ay, by)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    inter_w = max(0, inter_x2 - inter_x1)
+    inter_h = max(0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+    area_a = aw * ah
+    area_b = bw * bh
+    union = area_a + area_b - inter_area
+    if union <= 0:
+        return 0.0
+    return inter_area / union
+
+
+def nms_detections(detections: list[dict], iou_threshold: float = 0.3, max_keep: int = 20) -> list[dict]:
+    """
+    Greedy Non-Maximum Suppression to reduce duplicate/overlapping boxes.
+    """
+    if not detections:
+        return detections
+    detections_sorted = sorted(detections, key=lambda d: d["score"], reverse=True)
+    kept: list[dict] = []
+    for det in detections_sorted:
+        if len(kept) >= max_keep:
+            break
+        if all(_compute_iou(det["bbox"], k["bbox"]) <= iou_threshold for k in kept):
+            kept.append(det)
+    return kept
+
+
 def main() -> None:
     """
     打开电脑摄像头，使用HSV阈值识别画面中橙色区域，并显示阈值内的画面。
@@ -240,6 +371,7 @@ def main() -> None:
     操作方法：
     - 简化参数（推荐）：在“Controls”窗口仅调整：
       H center（色相中心）、H width（半宽度）、S min、V min、Morph。
+      Light tol (0-3) 用于增强对高光/阴影的容忍度。
     - 在“Original”窗口按住 Shift 并左键点击（或开启 Pick mode 直接左键），
       将以点击像素为中心自动设置/收紧阈值；若点击点已在范围内将与
       [中心±步长] 求交集，向点击颜色靠拢。
@@ -282,7 +414,11 @@ def main() -> None:
             frame_hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
             lower_hsv, upper_hsv, morph_strength = read_trackbar_hsv_bounds()
 
-            mask = cv2.inRange(frame_hsv, lower_hsv, upper_hsv)
+            # Lighting-robust union mask for orange (handles highlights/shadows)
+            mask_hsv = build_lighting_robust_mask(frame_hsv, lower_hsv, upper_hsv)
+            # Optional LAB ΔE mask centered at picked color (handles bright/dark sides)
+            mask_lab = build_lab_deltae_mask(frame_bgr)
+            mask = mask_hsv if mask_lab is None else cv2.bitwise_or(mask_hsv, mask_lab)
             mask = apply_morphology(mask, morph_strength)
 
             result = cv2.bitwise_and(frame_bgr, frame_bgr, mask=mask)
@@ -290,11 +426,80 @@ def main() -> None:
             # Circle-like detection based on the orange mask (can be disabled)
             result_to_show = result
             if cv2.getTrackbarPos("Detect (0/1)", "Controls") > 0:
-                # Use simplified defaults for detection
-                min_area_px, min_circularity = 800, 0.7
-                detections = find_circle_like_regions(mask, min_area_px, min_circularity)
+                # Early exit if mask is near-empty to avoid false positives in Hough
+                frame_h, frame_w = mask.shape[:2]
+                num_foreground = int(cv2.countNonZero(mask))
+                frame_area = int(frame_h * frame_w)
+                fg_ratio = num_foreground / max(1, frame_area)
+                if fg_ratio < 0.002:  # less than 0.2% pixels in-range → skip detection
+                    cv2.imshow("Original", frame_bgr)
+                    cv2.imshow("Mask", mask)
+                    cv2.imshow("Result (In-Range)", result_to_show)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q") or key == 27:
+                        break
+                    if key == ord("p"):
+                        pick_val = cv2.getTrackbarPos("Pick mode (0/1)", "Controls")
+                        cv2.setTrackbarPos("Pick mode (0/1)", "Controls", 0 if pick_val > 0 else 1)
+                    continue
+
+                # Adaptive thresholds based on frame size
+                min_area_px = max(150, int(frame_area * 0.0005))  # ~0.05% of frame
+                min_circularity = 0.7
+
+                detections = find_circle_like_regions(
+                    mask,
+                    min_area_px=min_area_px,
+                    min_circularity=min_circularity,
+                    min_fill_ratio=0.65,
+                    min_axis_ratio=0.8,
+                )
+
+                # Fallback: try HoughCircles if contour-based finds nothing
+                if len(detections) == 0 and fg_ratio > 0.01:
+                    # Work on masked grayscale; use tighter params
+                    gray = cv2.cvtColor(result, cv2.COLOR_BGR2GRAY)
+                    gray = cv2.GaussianBlur(gray, (7, 7), 1.5)
+                    min_dist = max(12, min(frame_h, frame_w) // 12)
+                    circles = cv2.HoughCircles(
+                        gray,
+                        cv2.HOUGH_GRADIENT,
+                        dp=1.2,
+                        minDist=min_dist,
+                        param1=140,
+                        param2=45,
+                        minRadius=6,
+                        maxRadius=0,
+                    )
+                    if circles is not None:
+                        circles = np.round(circles[0, :]).astype(int)
+                        # Validate by orange coverage inside the circle
+                        for (cx, cy, r) in circles[:12]:
+                            x = max(0, cx - r)
+                            y = max(0, cy - r)
+                            w = min(frame_w - x, 2 * r)
+                            h = min(frame_h - y, 2 * r)
+                            if w <= 0 or h <= 0:
+                                continue
+                            circle_mask = np.zeros((frame_h, frame_w), dtype=np.uint8)
+                            cv2.circle(circle_mask, (int(cx), int(cy)), int(r), 255, thickness=-1)
+                            # coverage of orange pixels in this circle
+                            orange_in_circle = cv2.countNonZero(cv2.bitwise_and(mask, circle_mask))
+                            circle_area_px = cv2.countNonZero(circle_mask)
+                            if circle_area_px == 0:
+                                continue
+                            coverage = orange_in_circle / float(circle_area_px)
+                            if coverage < 0.55:
+                                continue
+                            score = max(0.0, min(1.0, coverage))
+                            detections.append({"bbox": (x, y, w, h), "score": score, "contour": None})
+
+                # De-duplicate boxes
+                detections = nms_detections(detections, iou_threshold=0.35, max_keep=6)
+
                 result_with_boxes = result.copy()
-                draw_detections(result_with_boxes, detections)
+                if detections:
+                    draw_detections(result_with_boxes, detections)
                 result_to_show = result_with_boxes
 
             cv2.imshow("Original", frame_bgr)
