@@ -120,9 +120,13 @@ def detect_circles_mask(
     min_axis_ratio: float = 0.78,
     min_fill: float = 0.65,
     max_residual: float = 0.25,
+    min_arc_coverage: float = 0.6,
+    arc_tol: float = 0.1,
+    max_radius_frac: float = 0.45,
 ) -> List[dict]:
     h, w = mask.shape[:2]
     min_area = max(1, int(h * w * min_area_frac))
+    max_radius = max_radius_frac * min(h, w)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     dets: List[dict] = []
     for c in contours:
@@ -141,6 +145,8 @@ def detect_circles_mask(
         if fill < min_fill:
             continue
         (cx, cy), radius = mec
+        if radius > max_radius:
+            continue
         # Residual: mean absolute deviation of distances from fitted circle, normalized by radius
         pts = c.reshape(-1, 2).astype(np.float32)
         dists = np.sqrt((pts[:, 0] - cx) ** 2 + (pts[:, 1] - cy) ** 2)
@@ -149,13 +155,18 @@ def detect_circles_mask(
         residual = float(np.mean(np.abs(dists - radius)) / radius)
         if residual > max_residual:
             continue
+        # Arc coverage: fraction of points lying within tolerance band
+        arc_band = np.sum(np.abs(dists - radius) <= (arc_tol * radius))
+        arc_cov = float(arc_band) / float(len(dists)) if len(dists) > 0 else 0.0
+        if arc_cov < min_arc_coverage:
+            continue
         score = float(0.5 * circ + 0.2 * ar + 0.3 * fill)
         dets.append(
             {
                 "bbox": (int(x), int(y), int(bw), int(bh)),
                 "center": (int(cx), int(cy)),
                 "radius": int(radius),
-                "score": min(1.0, max(0.0, score * (1.0 - residual * 0.5))),
+                "score": min(1.0, max(0.0, score * (1.0 - residual * 0.5) * arc_cov)),
             }
         )
     return dets
@@ -169,7 +180,7 @@ def hough_fallback(
     param2: int = 32,
     min_radius: int = 6,
     max_radius: int = 0,
-    coverage_thr: float = 0.6,
+    coverage_thr: float = 0.7,
 ) -> List[dict]:
     circles = cv2.HoughCircles(
         gray,
