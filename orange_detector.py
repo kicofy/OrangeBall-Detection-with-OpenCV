@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import glob
 
 latest_frame_bgr = None  # updated each frame for mouse picking
 latest_picked_lab = None  # persists last picked color in Lab for ΔE mask
@@ -385,6 +386,30 @@ def open_camera_with_fallbacks(device_index: int = 0) -> cv2.VideoCapture | None
     return None
 
 
+def find_first_working_camera(max_devices: int = 10) -> tuple[cv2.VideoCapture | None, int | None]:
+    """
+    Scan /dev/video* (up to max_devices) and return the first working camera capture and its index.
+    """
+    indices: list[int] = []
+    for path in sorted(glob.glob("/dev/video*")):
+        try:
+            idx = int("".join(ch for ch in path if ch.isdigit()))
+            indices.append(idx)
+        except ValueError:
+            continue
+    # fallback to 0..max_devices if none found
+    if not indices:
+        indices = list(range(0, max_devices + 1))
+    seen = set()
+    unique_indices = [i for i in indices if not (i in seen or seen.add(i))]
+
+    for idx in unique_indices:
+        cap = open_camera_with_fallbacks(idx)
+        if cap is not None:
+            return cap, idx
+    return None, None
+
+
 def main() -> None:
     """
     打开电脑摄像头，使用HSV阈值识别画面中橙色区域，并显示阈值内的画面。
@@ -407,7 +432,7 @@ def main() -> None:
     default_upper = (25, 255, 255)
     create_trackbar_window(default_lower, default_upper)
 
-    video_capture = open_camera_with_fallbacks(0)
+    video_capture, cam_idx = find_first_working_camera()
     if video_capture is None:
         print(
             "无法打开摄像头。请检查：\n"
@@ -416,6 +441,8 @@ def main() -> None:
             "3) 若仍失败，可安装/修复 v4l2 与 gstreamer，或尝试指定其他 /dev/videoX。"
         )
         return
+    else:
+        print(f"已打开摄像头 /dev/video{cam_idx if cam_idx is not None else '?'}")
     # Reduce processing load by lowering capture resolution
     video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
