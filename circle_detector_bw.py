@@ -119,6 +119,7 @@ def detect_circles_mask(
     min_circularity: float = 0.78,
     min_axis_ratio: float = 0.78,
     min_fill: float = 0.65,
+    max_residual: float = 0.25,
 ) -> List[dict]:
     h, w = mask.shape[:2]
     min_area = max(1, int(h * w * min_area_frac))
@@ -140,13 +141,21 @@ def detect_circles_mask(
         if fill < min_fill:
             continue
         (cx, cy), radius = mec
+        # Residual: mean absolute deviation of distances from fitted circle, normalized by radius
+        pts = c.reshape(-1, 2).astype(np.float32)
+        dists = np.sqrt((pts[:, 0] - cx) ** 2 + (pts[:, 1] - cy) ** 2)
+        if radius <= 1e-3:
+            continue
+        residual = float(np.mean(np.abs(dists - radius)) / radius)
+        if residual > max_residual:
+            continue
         score = float(0.5 * circ + 0.2 * ar + 0.3 * fill)
         dets.append(
             {
                 "bbox": (int(x), int(y), int(bw), int(bh)),
                 "center": (int(cx), int(cy)),
                 "radius": int(radius),
-                "score": min(1.0, max(0.0, score)),
+                "score": min(1.0, max(0.0, score * (1.0 - residual * 0.5))),
             }
         )
     return dets
@@ -265,9 +274,24 @@ def main() -> None:
             else:
                 gray = frame
 
+            # Contrast enhance to help dark/bright regions
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            gray_eq = clahe.apply(gray)
+
             # Preprocess
-            gray_blur = cv2.GaussianBlur(gray, (5, 5), 0)
-            _, mask = cv2.threshold(gray_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            gray_blur = cv2.GaussianBlur(gray_eq, (5, 5), 0)
+
+            # Dual-threshold fusion: Otsu OR adaptive mean
+            _, mask_otsu = cv2.threshold(gray_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            mask_adapt = cv2.adaptiveThreshold(
+                gray_blur,
+                255,
+                cv2.ADAPTIVE_THRESH_MEAN_C,
+                cv2.THRESH_BINARY,
+                21,
+                5,
+            )
+            mask = cv2.bitwise_or(mask_otsu, mask_adapt)
 
             # Morph clean
             kernel = np.ones((3, 3), np.uint8)
@@ -281,6 +305,7 @@ def main() -> None:
                 min_circularity=0.78,
                 min_axis_ratio=0.78,
                 min_fill=0.65,
+                max_residual=0.25,
             )
 
             # Hough fallback when none found
