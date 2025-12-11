@@ -257,7 +257,9 @@ def draw_detections(img_bgr: np.ndarray, detections: List[dict]) -> None:
         cx, cy = d["center"]
         r = d["radius"]
         score = d["score"]
-        color = (0, 200, 0) if score >= 0.8 else (0, 200, 200)
+        if score < 0.9:
+            continue
+        color = (0, 200, 0)
         cv2.circle(img_bgr, (cx, cy), r, color, 2)
         cv2.rectangle(img_bgr, (x, y), (x + w, y + h), color, 1)
         label = f"{int(round(score * 100))}%"
