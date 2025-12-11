@@ -116,13 +116,18 @@ def nms(dets: List[dict], iou_thr: float = 0.35, max_keep: int = 8) -> List[dict
 def detect_circles_mask(
     mask: np.ndarray,
     min_area_frac: float = 0.0005,
-    min_circularity: float = 0.78,
-    min_axis_ratio: float = 0.78,
-    min_fill: float = 0.65,
-    max_residual: float = 0.25,
-    min_arc_coverage: float = 0.6,
-    arc_tol: float = 0.1,
-    max_radius_frac: float = 0.45,
+    min_circularity: float = 0.82,
+    min_axis_ratio: float = 0.82,
+    min_fill: float = 0.7,
+    max_residual: float = 0.18,
+    min_arc_coverage: float = 0.65,
+    arc_tol: float = 0.08,
+    max_radius_frac: float = 0.4,
+    min_radius_px: int = 8,
+    min_edge_arc_cov: float = 0.6,
+    edge_band: float = 0.08,
+    patch_std_min: float = 6.0,
+    gray_for_stats: Optional[np.ndarray] = None,
 ) -> List[dict]:
     h, w = mask.shape[:2]
     min_area = max(1, int(h * w * min_area_frac))
@@ -145,7 +150,7 @@ def detect_circles_mask(
         if fill < min_fill:
             continue
         (cx, cy), radius = mec
-        if radius > max_radius:
+        if radius > max_radius or radius < min_radius_px:
             continue
         # Residual: mean absolute deviation of distances from fitted circle, normalized by radius
         pts = c.reshape(-1, 2).astype(np.float32)
@@ -160,13 +165,34 @@ def detect_circles_mask(
         arc_cov = float(arc_band) / float(len(dists)) if len(dists) > 0 else 0.0
         if arc_cov < min_arc_coverage:
             continue
+        edge_cov = 1.0
+        if gray_for_stats is not None:
+            edges = cv2.Canny(gray_for_stats, 60, 150)
+            ring = np.zeros_like(edges)
+            inner_r = max(1, int(radius * (1.0 - edge_band)))
+            outer_r = int(radius * (1.0 + edge_band))
+            cv2.circle(ring, (int(cx), int(cy)), outer_r, 255, thickness=-1)
+            cv2.circle(ring, (int(cx), int(cy)), inner_r, 0, thickness=-1)
+            ring_edges = cv2.bitwise_and(edges, ring)
+            ring_count = int(np.count_nonzero(ring))
+            edge_cov = float(np.count_nonzero(ring_edges)) / float(ring_count) if ring_count > 0 else 0.0
+            if edge_cov < min_edge_arc_cov:
+                continue
+        if gray_for_stats is not None:
+            mask_circle = np.zeros_like(mask)
+            cv2.circle(mask_circle, (int(cx), int(cy)), int(radius), 255, thickness=-1)
+            pixels = gray_for_stats[mask_circle > 0]
+            if pixels.size > 0:
+                std_local = float(np.std(pixels))
+                if std_local < patch_std_min:
+                    continue
         score = float(0.5 * circ + 0.2 * ar + 0.3 * fill)
         dets.append(
             {
                 "bbox": (int(x), int(y), int(bw), int(bh)),
                 "center": (int(cx), int(cy)),
                 "radius": int(radius),
-                "score": min(1.0, max(0.0, score * (1.0 - residual * 0.5) * arc_cov)),
+                "score": min(1.0, max(0.0, score * (1.0 - residual * 0.5) * arc_cov * edge_cov)),
             }
         )
     return dets
@@ -313,10 +339,18 @@ def main() -> None:
             dets = detect_circles_mask(
                 mask_clean,
                 min_area_frac=0.0005,
-                min_circularity=0.78,
-                min_axis_ratio=0.78,
-                min_fill=0.65,
-                max_residual=0.25,
+                min_circularity=0.82,
+                min_axis_ratio=0.82,
+                min_fill=0.7,
+                max_residual=0.18,
+                min_arc_coverage=0.65,
+                arc_tol=0.08,
+                max_radius_frac=0.4,
+                min_radius_px=8,
+                min_edge_arc_cov=0.6,
+                edge_band=0.08,
+                patch_std_min=6.0,
+                gray_for_stats=gray_eq,
             )
 
             # Hough fallback when none found
@@ -328,9 +362,9 @@ def main() -> None:
                     min_dist=min_dist,
                     param1=140,
                     param2=30,
-                    min_radius=6,
-                    max_radius=0,
-                    coverage_thr=0.6,
+                    min_radius=8,
+                    max_radius=int(min(gray.shape[:2]) * 0.4),
+                    coverage_thr=0.75,
                 )
                 dets.extend(hough_dets)
 
