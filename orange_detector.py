@@ -364,6 +364,27 @@ def nms_detections(detections: list[dict], iou_threshold: float = 0.3, max_keep:
     return kept
 
 
+def open_camera_with_fallbacks(device_index: int = 0) -> cv2.VideoCapture | None:
+    """
+    Try multiple backends to open the camera, useful on Raspberry Pi / Linux when GStreamer fails.
+    """
+    candidates = [
+        (cv2.CAP_V4L2, "CAP_V4L2"),
+        (cv2.CAP_ANY, "CAP_ANY"),
+    ]
+    for backend, name in candidates:
+        cap = cv2.VideoCapture(device_index, backend)
+        if not cap.isOpened():
+            cap.release()
+            continue
+        # try a test read to verify frames are available
+        ok, _ = cap.read()
+        if ok:
+            return cap
+        cap.release()
+    return None
+
+
 def main() -> None:
     """
     打开电脑摄像头，使用HSV阈值识别画面中橙色区域，并显示阈值内的画面。
@@ -386,9 +407,14 @@ def main() -> None:
     default_upper = (25, 255, 255)
     create_trackbar_window(default_lower, default_upper)
 
-    video_capture = cv2.VideoCapture(0, cv2.CAP_ANY)
-    if not video_capture.isOpened():
-        print("无法打开摄像头。请检查摄像头权限或设备连接。")
+    video_capture = open_camera_with_fallbacks(0)
+    if video_capture is None:
+        print(
+            "无法打开摄像头。请检查：\n"
+            "1) 摄像头是否连接、启用（树莓派需在 raspi-config 打开摄像头）。\n"
+            "2) 当前用户是否在 video 组，可用 `groups` 检查，若无执行 `sudo usermod -aG video $(whoami)` 并重启。\n"
+            "3) 若仍失败，可安装/修复 v4l2 与 gstreamer，或尝试指定其他 /dev/videoX。"
+        )
         return
     # Reduce processing load by lowering capture resolution
     video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
