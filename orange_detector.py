@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import glob
+import os
 
 latest_frame_bgr = None  # updated each frame for mouse picking
 latest_picked_lab = None  # persists last picked color in Lab for ΔE mask
@@ -386,24 +387,39 @@ def open_camera_with_fallbacks(device_index: int = 0) -> cv2.VideoCapture | None
     return None
 
 
-def find_first_working_camera(max_devices: int = 10) -> tuple[cv2.VideoCapture | None, int | None]:
+def get_candidate_indices(max_devices: int = 6) -> list[int]:
     """
-    Scan /dev/video* (up to max_devices) and return the first working camera capture and its index.
+    Build candidate camera indices. If CAM_INDEX env is set, use it only.
+    Otherwise, try /dev/video8 (你的 Arducam OV9281)，再尝试 /dev/video*。
     """
-    indices: list[int] = []
+    env_idx = os.environ.get("CAM_INDEX")
+    if env_idx is not None:
+        try:
+            idx = int(env_idx)
+            return [idx]
+        except ValueError:
+            pass
+
+    # Prefer the known device index for Arducam OV9281
+    preferred = [8]
+    indices: list[int] = preferred.copy()
     for path in sorted(glob.glob("/dev/video*")):
         try:
             idx = int("".join(ch for ch in path if ch.isdigit()))
             indices.append(idx)
         except ValueError:
             continue
-    # fallback to 0..max_devices if none found
     if not indices:
         indices = list(range(0, max_devices + 1))
     seen = set()
-    unique_indices = [i for i in indices if not (i in seen or seen.add(i))]
+    return [i for i in indices if not (i in seen or seen.add(i))]
 
-    for idx in unique_indices:
+
+def find_first_working_camera(max_devices: int = 6) -> tuple[cv2.VideoCapture | None, int | None]:
+    """
+    Scan /dev/video* (up to max_devices) and return the first working camera capture and its index.
+    """
+    for idx in get_candidate_indices(max_devices):
         cap = open_camera_with_fallbacks(idx)
         if cap is not None:
             return cap, idx
@@ -438,7 +454,8 @@ def main() -> None:
             "无法打开摄像头。请检查：\n"
             "1) 摄像头是否连接、启用（树莓派需在 raspi-config 打开摄像头）。\n"
             "2) 当前用户是否在 video 组，可用 `groups` 检查，若无执行 `sudo usermod -aG video $(whoami)` 并重启。\n"
-            "3) 若仍失败，可安装/修复 v4l2 与 gstreamer，或尝试指定其他 /dev/videoX。"
+            "3) 若仍失败，可安装/修复 v4l2 与 gstreamer，或尝试指定其他 /dev/videoX。\n"
+            "4) 也可以用环境变量 CAM_INDEX=数字 强制指定 /dev/videoX，避免扫描无效设备。"
         )
         return
     else:
