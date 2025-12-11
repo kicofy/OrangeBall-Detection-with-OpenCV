@@ -26,7 +26,8 @@ def get_candidate_indices(max_devices: int = 6) -> List[int]:
     """
     Build candidate camera indices.
     - If CAM_INDEX is set, only use it.
-    - Else, prefer discovered /dev/video* up to max_devices.
+    - Else, prefer the known Arducam OV9281 nodes (/dev/video8, /dev/video9),
+      then discovered /dev/video* up to max_devices.
     """
     env_idx = os.environ.get("CAM_INDEX")
     if env_idx is not None:
@@ -34,7 +35,8 @@ def get_candidate_indices(max_devices: int = 6) -> List[int]:
             return [int(env_idx)]
         except ValueError:
             pass
-    indices: List[int] = []
+    preferred = [8, 9]
+    indices: List[int] = preferred.copy()
     for path in sorted(glob.glob("/dev/video*")):
         try:
             idx = int("".join(ch for ch in path if ch.isdigit()))
