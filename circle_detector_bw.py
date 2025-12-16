@@ -116,17 +116,17 @@ def nms(dets: List[dict], iou_thr: float = 0.35, max_keep: int = 8) -> List[dict
 def detect_circles_mask(
     mask: np.ndarray,
     min_area_frac: float = 0.0005,
-    min_circularity: float = 0.82,
-    min_axis_ratio: float = 0.82,
-    min_fill: float = 0.7,
-    max_residual: float = 0.18,
-    min_arc_coverage: float = 0.65,
-    arc_tol: float = 0.08,
+    min_circularity: float = 0.86,
+    min_axis_ratio: float = 0.86,
+    min_fill: float = 0.72,
+    max_residual: float = 0.14,
+    min_arc_coverage: float = 0.7,
+    arc_tol: float = 0.06,
     max_radius_frac: float = 0.4,
     min_radius_px: int = 8,
-    min_edge_arc_cov: float = 0.6,
-    edge_band: float = 0.08,
-    patch_std_min: float = 6.0,
+    min_edge_arc_cov: float = 0.7,
+    edge_band: float = 0.06,
+    patch_std_min: float = 8.0,
     gray_for_stats: Optional[np.ndarray] = None,
 ) -> List[dict]:
     h, w = mask.shape[:2]
@@ -203,10 +203,10 @@ def hough_fallback(
     mask: np.ndarray,
     min_dist: int,
     param1: int = 140,
-    param2: int = 32,
-    min_radius: int = 6,
+    param2: int = 34,
+    min_radius: int = 8,
     max_radius: int = 0,
-    coverage_thr: float = 0.7,
+    coverage_thr: float = 0.8,
 ) -> List[dict]:
     circles = cv2.HoughCircles(
         gray,
@@ -341,17 +341,17 @@ def main() -> None:
             dets = detect_circles_mask(
                 mask_clean,
                 min_area_frac=0.0005,
-                min_circularity=0.82,
-                min_axis_ratio=0.82,
-                min_fill=0.7,
-                max_residual=0.18,
-                min_arc_coverage=0.65,
-                arc_tol=0.08,
+                min_circularity=0.86,
+                min_axis_ratio=0.86,
+                min_fill=0.72,
+                max_residual=0.14,
+                min_arc_coverage=0.7,
+                arc_tol=0.06,
                 max_radius_frac=0.4,
                 min_radius_px=8,
-                min_edge_arc_cov=0.6,
-                edge_band=0.08,
-                patch_std_min=6.0,
+                min_edge_arc_cov=0.7,
+                edge_band=0.06,
+                patch_std_min=8.0,
                 gray_for_stats=gray_eq,
             )
 
@@ -370,7 +370,7 @@ def main() -> None:
                 )
                 dets.extend(hough_dets)
 
-            dets = nms(dets, iou_thr=0.35, max_keep=6)
+            dets = nms(dets, iou_thr=0.3, max_keep=3)
 
             result = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
             if dets:
