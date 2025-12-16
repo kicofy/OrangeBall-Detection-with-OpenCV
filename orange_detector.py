@@ -390,7 +390,7 @@ def open_camera_with_fallbacks(device_index: int = 0) -> cv2.VideoCapture | None
 def get_candidate_indices(max_devices: int = 6) -> list[int]:
     """
     Build candidate camera indices. If CAM_INDEX env is set, use it only.
-    Otherwise, try /dev/video8 (你的 Arducam OV9281)，再尝试 /dev/video*。
+    Otherwise, prefer CSI/USB 常见节点 /dev/video0-7，然后遍历 /dev/video*。
     """
     env_idx = os.environ.get("CAM_INDEX")
     if env_idx is not None:
@@ -400,8 +400,8 @@ def get_candidate_indices(max_devices: int = 6) -> list[int]:
         except ValueError:
             pass
 
-    # Prefer the known device index for Arducam OV9281
-    preferred = [8]
+    # Prefer CSI/常见前几个节点
+    preferred = list(range(0, 8))
     indices: list[int] = preferred.copy()
     for path in sorted(glob.glob("/dev/video*")):
         try:
@@ -463,6 +463,7 @@ def main() -> None:
     # Reduce processing load by lowering capture resolution
     video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     cv2.namedWindow("Original", cv2.WINDOW_NORMAL)
     cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
