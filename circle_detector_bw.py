@@ -290,14 +290,18 @@ def main() -> None:
         return
     print(f"已打开摄像头 /dev/video{cam_idx if cam_idx is not None else '?'}")
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     cv2.namedWindow("Original", cv2.WINDOW_NORMAL)
     cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
     cv2.namedWindow("Result", cv2.WINDOW_NORMAL)
 
+    scale_det = 0.5  # detection on half-resolution to save compute
+    detect_every = 3
+    frame_idx = 0
+    last_dets: List[dict] = []
     try:
         while True:
             # Reduce latency: grab then retrieve latest frame
@@ -317,8 +321,11 @@ def main() -> None:
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             gray_eq = clahe.apply(gray)
 
+            # Downscale for faster processing
+            small_gray = cv2.resize(gray_eq, None, fx=scale_det, fy=scale_det, interpolation=cv2.INTER_AREA)
+
             # Preprocess
-            gray_blur = cv2.GaussianBlur(gray_eq, (5, 5), 0)
+            gray_blur = cv2.GaussianBlur(small_gray, (5, 5), 0)
 
             # Dual-threshold fusion: Otsu OR adaptive mean
             _, mask_otsu = cv2.threshold(gray_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -335,49 +342,77 @@ def main() -> None:
             # Morph clean
             kernel = np.ones((3, 3), np.uint8)
             mask_clean = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-            mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel, iterations=1)
 
-            # Contour-based detection
-            dets = detect_circles_mask(
-                mask_clean,
-                min_area_frac=0.0005,
-                min_circularity=0.86,
-                min_axis_ratio=0.86,
-                min_fill=0.72,
-                max_residual=0.14,
-                min_arc_coverage=0.7,
-                arc_tol=0.06,
-                max_radius_frac=0.4,
-                min_radius_px=8,
-                min_edge_arc_cov=0.7,
-                edge_band=0.06,
-                patch_std_min=8.0,
-                gray_for_stats=gray_eq,
-            )
-
-            # Hough fallback when none found
-            if not dets:
-                min_dist = max(12, min(gray.shape[:2]) // 12)
-                hough_dets = hough_fallback(
-                    gray_blur,
+            run_detect = (frame_idx % detect_every == 0)
+            dets: List[dict] = last_dets
+            if run_detect:
+                dets = detect_circles_mask(
                     mask_clean,
-                    min_dist=min_dist,
-                    param1=140,
-                    param2=30,
-                    min_radius=8,
-                    max_radius=int(min(gray.shape[:2]) * 0.4),
-                    coverage_thr=0.75,
+                    min_area_frac=0.0005,
+                    min_circularity=0.86,
+                    min_axis_ratio=0.86,
+                    min_fill=0.72,
+                    max_residual=0.14,
+                    min_arc_coverage=0.7,
+                    arc_tol=0.06,
+                    max_radius_frac=0.4,
+                    min_radius_px=max(4, int(8 * scale_det)),  # scale-aware
+                    min_edge_arc_cov=0.7,
+                    edge_band=0.06,
+                    patch_std_min=8.0,
+                    gray_for_stats=small_gray,
                 )
-                dets.extend(hough_dets)
 
-            dets = nms(dets, iou_thr=0.3, max_keep=3)
+                # Hough fallback is disabled by default for speed; set True to enable if needed
+                if False and not dets:
+                    min_dist = max(12, min(small_gray.shape[:2]) // 12)
+                    hough_dets = hough_fallback(
+                        gray_blur,
+                        mask_clean,
+                        min_dist=min_dist,
+                        param1=140,
+                        param2=30,
+                        min_radius=max(4, int(8 * scale_det)),
+                        max_radius=int(min(small_gray.shape[:2]) * 0.4),
+                        coverage_thr=0.75,
+                    )
+                    dets.extend(hough_dets)
+
+                dets = nms(dets, iou_thr=0.3, max_keep=3)
+
+                # map detections back to full-res coordinates
+                if dets:
+                    mapped = []
+                    for d in dets:
+                        x, y, w, h = d["bbox"]
+                        cx, cy = d["center"]
+                        r = d["radius"]
+                        scale_up = 1.0 / scale_det
+                        mapped.append(
+                            {
+                                "bbox": (
+                                    int(x * scale_up),
+                                    int(y * scale_up),
+                                    int(w * scale_up),
+                                    int(h * scale_up),
+                                ),
+                                "center": (int(cx * scale_up), int(cy * scale_up)),
+                                "radius": int(r * scale_up),
+                                "score": d["score"],
+                            }
+                        )
+                    dets = mapped
+                last_dets = dets
+
+            frame_idx += 1
 
             result = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
             if dets:
                 draw_detections(result, dets)
 
+            mask_vis = cv2.resize(mask_clean, (gray.shape[1], gray.shape[0]), interpolation=cv2.INTER_NEAREST)
             cv2.imshow("Original", gray)
-            cv2.imshow("Mask", mask_clean)
+            cv2.imshow("Mask", mask_vis)
             cv2.imshow("Result", result)
 
             key = cv2.waitKey(1) & 0xFF
