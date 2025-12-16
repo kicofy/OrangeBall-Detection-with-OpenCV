@@ -115,18 +115,18 @@ def nms(dets: List[dict], iou_thr: float = 0.35, max_keep: int = 8) -> List[dict
 # ---------- Detection ----------
 def detect_circles_mask(
     mask: np.ndarray,
-    min_area_frac: float = 0.0005,
-    min_circularity: float = 0.82,
-    min_axis_ratio: float = 0.82,
-    min_fill: float = 0.68,
-    max_residual: float = 0.18,
-    min_arc_coverage: float = 0.65,
-    arc_tol: float = 0.08,
-    max_radius_frac: float = 0.45,
+    min_area_frac: float = 0.0003,
+    min_circularity: float = 0.80,
+    min_axis_ratio: float = 0.80,
+    min_fill: float = 0.65,
+    max_residual: float = 0.22,
+    min_arc_coverage: float = 0.60,
+    arc_tol: float = 0.10,
+    max_radius_frac: float = 0.50,
     min_radius_px: int = 8,
-    min_edge_arc_cov: float = 0.6,
-    edge_band: float = 0.08,
-    patch_std_min: float = 6.5,
+    min_edge_arc_cov: float = 0.55,
+    edge_band: float = 0.10,
+    patch_std_min: float = 5.5,
     gray_for_stats: Optional[np.ndarray] = None,
 ) -> List[dict]:
     h, w = mask.shape[:2]
@@ -299,7 +299,7 @@ def main() -> None:
     cv2.namedWindow("Result", cv2.WINDOW_NORMAL)
 
     scale_det = 0.5  # detection on half-resolution to save compute
-    detect_every = 2
+    detect_every = 1
     frame_idx = 0
     last_dets: List[dict] = []
     try:
@@ -349,37 +349,37 @@ def main() -> None:
             if run_detect:
                 dets = detect_circles_mask(
                     mask_clean,
-                    min_area_frac=0.0005,
-                    min_circularity=0.82,
-                    min_axis_ratio=0.82,
-                    min_fill=0.68,
-                    max_residual=0.18,
-                    min_arc_coverage=0.65,
-                    arc_tol=0.08,
-                    max_radius_frac=0.45,
+                    min_area_frac=0.0003,
+                    min_circularity=0.80,
+                    min_axis_ratio=0.80,
+                    min_fill=0.65,
+                    max_residual=0.22,
+                    min_arc_coverage=0.60,
+                    arc_tol=0.10,
+                    max_radius_frac=0.50,
                     min_radius_px=max(4, int(6 * scale_det)),  # scale-aware
-                    min_edge_arc_cov=0.6,
-                    edge_band=0.08,
-                    patch_std_min=6.5,
+                    min_edge_arc_cov=0.55,
+                    edge_band=0.10,
+                    patch_std_min=5.5,
                     gray_for_stats=small_gray,
                 )
 
-                # Hough fallback is disabled by default for speed; set True to enable if needed
-                if False and not dets:
+                # Hough fallback enabled when无检测（可轻度补充召回）
+                if not dets:
                     min_dist = max(12, min(small_gray.shape[:2]) // 12)
                     hough_dets = hough_fallback(
                         gray_blur,
                         mask_clean,
                         min_dist=min_dist,
                         param1=140,
-                        param2=30,
-                        min_radius=max(4, int(8 * scale_det)),
-                        max_radius=int(min(small_gray.shape[:2]) * 0.4),
-                        coverage_thr=0.75,
+                        param2=32,
+                        min_radius=max(4, int(6 * scale_det)),
+                        max_radius=int(min(small_gray.shape[:2]) * 0.5),
+                        coverage_thr=0.7,
                     )
                     dets.extend(hough_dets)
 
-                dets = nms(dets, iou_thr=0.3, max_keep=3)
+                dets = nms(dets, iou_thr=0.3, max_keep=5)
 
                 # map detections back to full-res coordinates
                 if dets:
