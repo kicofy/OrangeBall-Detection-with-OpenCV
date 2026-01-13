@@ -67,6 +67,8 @@ class Params:
     v_min: int = 60
     lab_tol: int = 40
     suppress_green: int = 0  # 先关闭绿色抑制，确保球能被捕获
+    auto_exposure: int = 0  # 0=manual, 1=auto
+    exposure: int = 200  # slider value; mapped to CAP_PROP_EXPOSURE
 
     morph_open: int = 1
     morph_close: int = 1
@@ -102,6 +104,8 @@ def create_trackbar_window(p: Params):
     cv2.createTrackbar("V min", "Controls", p.v_min, 255, lambda x: None)
     cv2.createTrackbar("Lab tol", "Controls", p.lab_tol, 80, lambda x: None)
     cv2.createTrackbar("Suppress green (0/1)", "Controls", p.suppress_green, 1, lambda x: None)
+    cv2.createTrackbar("Auto exp (0/1)", "Controls", p.auto_exposure, 1, lambda x: None)
+    cv2.createTrackbar("Exposure slider", "Controls", p.exposure, 500, lambda x: None)
 
     cv2.createTrackbar("Morph open (0-2)", "Controls", p.morph_open, 2, lambda x: None)
     cv2.createTrackbar("Morph close (0-2)", "Controls", p.morph_close, 2, lambda x: None)
@@ -133,6 +137,8 @@ def read_trackbar_params(p: Params) -> Params:
     q.v_min = cv2.getTrackbarPos("V min", "Controls")
     q.lab_tol = cv2.getTrackbarPos("Lab tol", "Controls")
     q.suppress_green = cv2.getTrackbarPos("Suppress green (0/1)", "Controls")
+    q.auto_exposure = cv2.getTrackbarPos("Auto exp (0/1)", "Controls")
+    q.exposure = cv2.getTrackbarPos("Exposure slider", "Controls")
 
     q.morph_open = cv2.getTrackbarPos("Morph open (0-2)", "Controls")
     q.morph_close = cv2.getTrackbarPos("Morph close (0-2)", "Controls")
@@ -381,6 +387,9 @@ def main() -> None:
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    # Initial exposure setup (may depend on driver/backend support)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1 if params.auto_exposure else 0)
+    cap.set(cv2.CAP_PROP_EXPOSURE, params.exposure)
 
     cv2.namedWindow("Original", cv2.WINDOW_NORMAL)
     cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
@@ -413,6 +422,10 @@ def main() -> None:
     try:
         while True:
             params = read_trackbar_params(params)
+            # Update exposure each loop (cheap; some drivers need this)
+            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1 if params.auto_exposure else 0)
+            if params.auto_exposure == 0:
+                cap.set(cv2.CAP_PROP_EXPOSURE, params.exposure)
 
             if mode == "live":
                 cap.grab()
