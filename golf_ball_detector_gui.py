@@ -163,6 +163,20 @@ def read_trackbar_params(p: Params) -> Params:
     return q
 
 
+def apply_exposure(cap: cv2.VideoCapture, p: Params) -> None:
+    """
+    Try to force manual exposure on V4L2:
+    - CAP_PROP_AUTO_EXPOSURE: 0.25 means manual, 0.75 means auto (per V4L2 backend约定)
+    - CAP_PROP_EXPOSURE: typical range is negative (log2 seconds); here we pass slider directly,
+      relying on driver to interpret. If无效，可在运行时调 slider。
+    """
+    if p.auto_exposure:
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)  # auto
+    else:
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # manual
+        cap.set(cv2.CAP_PROP_EXPOSURE, float(p.exposure))
+
+
 # ---------- Masking ----------
 def hsv_orange_mask(bgr: np.ndarray, p: Params) -> np.ndarray:
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
@@ -387,9 +401,8 @@ def main() -> None:
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    # Initial exposure setup (may depend on driver/backend support)
-    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1 if params.auto_exposure else 0)
-    cap.set(cv2.CAP_PROP_EXPOSURE, params.exposure)
+    # Initial exposure setup (manual by default)
+    apply_exposure(cap, params)
 
     cv2.namedWindow("Original", cv2.WINDOW_NORMAL)
     cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
@@ -423,9 +436,7 @@ def main() -> None:
         while True:
             params = read_trackbar_params(params)
             # Update exposure each loop (cheap; some drivers need this)
-            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1 if params.auto_exposure else 0)
-            if params.auto_exposure == 0:
-                cap.set(cv2.CAP_PROP_EXPOSURE, params.exposure)
+            apply_exposure(cap, params)
 
             if mode == "live":
                 cap.grab()
