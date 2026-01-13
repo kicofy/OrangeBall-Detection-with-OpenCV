@@ -63,31 +63,31 @@ def find_camera(max_devices: int = 8) -> Tuple[Optional[cv2.VideoCapture], Optio
 class Params:
     h_low: int = 5
     h_high: int = 25
-    s_min: int = 80
-    v_min: int = 80
-    lab_tol: int = 28
-    suppress_green: int = 1
+    s_min: int = 60
+    v_min: int = 60
+    lab_tol: int = 40
+    suppress_green: int = 0  # 先关闭绿色抑制，确保球能被捕获
 
     morph_open: int = 1
     morph_close: int = 1
-    blur_ksize: int = 5  # must be odd
+    blur_ksize: int = 3  # must be odd
 
-    min_circularity: float = 0.75
-    min_axis_ratio: float = 0.75
-    min_fill: float = 0.65
-    max_residual: float = 0.22
-    min_arc_coverage: float = 0.6
-    min_edge_cov: float = 0.55
-    edge_band: float = 0.10
-    patch_std_min: float = 5.0
-    min_radius_px: int = 6
-    max_radius_frac: float = 0.45
+    min_circularity: float = 0.60
+    min_axis_ratio: float = 0.60
+    min_fill: float = 0.50
+    max_residual: float = 0.35
+    min_arc_coverage: float = 0.50
+    min_edge_cov: float = 0.35
+    edge_band: float = 0.12
+    patch_std_min: float = 3.5
+    min_radius_px: int = 4
+    max_radius_frac: float = 0.60
 
-    scale: float = 0.75
-    detect_every: int = 2
-    score_thr: float = 0.7
+    scale: float = 1.0
+    detect_every: int = 1
+    score_thr: float = 0.5
     nms_iou: float = 0.35
-    nms_keep: int = 5
+    nms_keep: int = 10
 
 
 def ensure_odd(x: int) -> int:
@@ -494,7 +494,7 @@ def main() -> None:
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q") or key == 27:
                 break
-            if key == ord("k") and (cv2.getWindowProperty("Original", 0) >= 0) and (cv2.waitKey(1) & 0xFF) == 75:  # Shift+K not reliably detected; use 'k'
+            if key == ord("k") and (cv2.getWindowProperty("Original", 0) >= 0):
                 # Take snapshot
                 snapshot_frame = source_frame.copy()
                 mode = "snapshot"
