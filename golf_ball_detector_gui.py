@@ -217,6 +217,36 @@ def patch_std(gray: np.ndarray, center: Tuple[int, int], radius: int) -> float:
     return float(np.std(pixels))
 
 
+def iou(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ax2, ay2 = ax + aw, ay + ah
+    bx2, by2 = bx + bw, by + bh
+    inter_x1, inter_y1 = max(ax, bx), max(ay, by)
+    inter_x2, inter_y2 = min(ax2, bx2), min(ay2, by2)
+    inter_w, inter_h = max(0, inter_x2 - inter_x1), max(0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+    if inter_area == 0:
+        return 0.0
+    area_a = aw * ah
+    area_b = bw * bh
+    union = area_a + area_b - inter_area
+    return inter_area / union if union > 0 else 0.0
+
+
+def nms(dets: List[dict], iou_thr: float = 0.35, max_keep: int = 6) -> List[dict]:
+    if not dets:
+        return dets
+    dets = sorted(dets, key=lambda d: d["score"], reverse=True)
+    kept: List[dict] = []
+    for d in dets:
+        if len(kept) >= max_keep:
+            break
+        if all(iou(d["bbox"], k["bbox"]) <= iou_thr for k in kept):
+            kept.append(d)
+    return kept
+
+
 def detect_candidates(mask: np.ndarray, edges: np.ndarray, gray: np.ndarray, p: Params) -> List[dict]:
     h, w = mask.shape[:2]
     min_r = max(p.min_radius_px, int(min(h, w) * 0.02))
