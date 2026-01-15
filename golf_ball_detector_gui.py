@@ -61,18 +61,19 @@ def find_camera(max_devices: int = 8) -> Tuple[Optional[cv2.VideoCapture], Optio
 # ---------- Config & GUI ----------
 @dataclass
 class Params:
-    h_low: int = 5
-    h_high: int = 25
-    s_min: int = 60
-    v_min: int = 60
+    h_low: int = 4
+    h_high: int = 6
+    s_min: int = 176
+    v_min: int = 144
     lab_tol: int = 40
-    suppress_green: int = 0  # 先关闭绿色抑制，确保球能被捕获
+    suppress_green: int = 0  # 0=关闭绿抑制，先确保橙球被捕获
     auto_exposure: int = 0  # 0=manual, 1=auto
     exposure: int = 200  # slider value; mapped to CAP_PROP_EXPOSURE
+    mirror: int = 0  # 0=no flip, 1=horizontal flip
 
     morph_open: int = 1
     morph_close: int = 1
-    blur_ksize: int = 3  # must be odd
+    blur_ksize: int = 5  # must be odd
 
     min_circularity: float = 0.60
     min_axis_ratio: float = 0.60
@@ -80,14 +81,14 @@ class Params:
     max_residual: float = 0.35
     min_arc_coverage: float = 0.50
     min_edge_cov: float = 0.35
-    edge_band: float = 0.12
+    edge_band: float = 0.20
     patch_std_min: float = 3.5
     min_radius_px: int = 4
     max_radius_frac: float = 0.60
 
     scale: float = 1.0
     detect_every: int = 1
-    score_thr: float = 0.5
+    score_thr: float = 0.4
     nms_iou: float = 0.35
     nms_keep: int = 10
 
@@ -106,6 +107,7 @@ def create_trackbar_window(p: Params):
     cv2.createTrackbar("Suppress green (0/1)", "Controls", p.suppress_green, 1, lambda x: None)
     cv2.createTrackbar("Auto exp (0/1)", "Controls", p.auto_exposure, 1, lambda x: None)
     cv2.createTrackbar("Exposure slider", "Controls", p.exposure, 500, lambda x: None)
+    cv2.createTrackbar("Mirror (0/1)", "Controls", p.mirror, 1, lambda x: None)
 
     cv2.createTrackbar("Morph open (0-2)", "Controls", p.morph_open, 2, lambda x: None)
     cv2.createTrackbar("Morph close (0-2)", "Controls", p.morph_close, 2, lambda x: None)
@@ -139,6 +141,7 @@ def read_trackbar_params(p: Params) -> Params:
     q.suppress_green = cv2.getTrackbarPos("Suppress green (0/1)", "Controls")
     q.auto_exposure = cv2.getTrackbarPos("Auto exp (0/1)", "Controls")
     q.exposure = cv2.getTrackbarPos("Exposure slider", "Controls")
+    q.mirror = cv2.getTrackbarPos("Mirror (0/1)", "Controls")
 
     q.morph_open = cv2.getTrackbarPos("Morph open (0-2)", "Controls")
     q.morph_close = cv2.getTrackbarPos("Morph close (0-2)", "Controls")
@@ -161,6 +164,21 @@ def read_trackbar_params(p: Params) -> Params:
     q.nms_iou = cv2.getTrackbarPos("nms iou x100", "Controls") / 100.0
     q.nms_keep = max(1, cv2.getTrackbarPos("nms keep", "Controls"))
     return q
+
+
+def print_params(p: Params):
+    print(
+        f"H[{p.h_low},{p.h_high}] "
+        f"Smin={p.s_min} Vmin={p.v_min} Lab_tol={p.lab_tol} Suppress_green={p.suppress_green} "
+        f"AutoExp={p.auto_exposure} Exp={p.exposure} Mirror={p.mirror} | "
+        f"Morph(open={p.morph_open},close={p.morph_close}) Blur={p.blur_ksize} | "
+        f"Shape: circ>={p.min_circularity:.2f} axis>={p.min_axis_ratio:.2f} fill>={p.min_fill:.2f} "
+        f"res<={p.max_residual:.2f} arc>={p.min_arc_coverage:.2f} edge>={p.min_edge_cov:.2f} "
+        f"band={p.edge_band:.2f} std>={p.patch_std_min:.2f} r_px>={p.min_radius_px} "
+        f"r_max%={p.max_radius_frac:.2f} | "
+        f"scale={p.scale:.2f} detect_every={p.detect_every} score_thr={p.score_thr:.2f} "
+        f"nms_iou={p.nms_iou:.2f} nms_keep={p.nms_keep}"
+    )
 
 
 def apply_exposure(cap: cv2.VideoCapture, p: Params) -> None:
@@ -322,6 +340,34 @@ def detect_candidates(mask: np.ndarray, edges: np.ndarray, gray: np.ndarray, p: 
     return dets
 
 
+def fallback_from_mask(mask: np.ndarray, p: Params) -> List[dict]:
+    """If no detections, do a simple mask-based circle proposal."""
+    h, w = mask.shape[:2]
+    min_area = max(1, int(h * w * 0.0003))
+    min_r = max(p.min_radius_px, int(min(h, w) * 0.02))
+    max_r = int(min(h, w) * p.max_radius_frac)
+    dets: List[dict] = []
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < min_area:
+            continue
+        (cx, cy), radius = cv2.minEnclosingCircle(c)
+        if radius < min_r or radius > max_r:
+            continue
+        x, y, bw, bh = cv2.boundingRect(c)
+        score = 0.5
+        dets.append(
+            {
+                "center": (int(cx), int(cy)),
+                "radius": int(radius),
+                "bbox": (x, y, bw, bh),
+                "score": score,
+            }
+        )
+    return dets
+
+
 def draw_detections(frame: np.ndarray, circles: List[dict], score_thr: float = 0.7) -> None:
     for c in circles:
         if c["score"] < score_thr:
@@ -341,13 +387,16 @@ def draw_detections(frame: np.ndarray, circles: List[dict], score_thr: float = 0
 class Annotator:
     def __init__(self):
         self.drawing = False
-        self.radius = 8
+        self.radius = 40
+        self.center = None
         self.mask = None
         self.img = None
         self.window = "Annotate"
 
     def set_image(self, img: np.ndarray):
         self.img = img.copy()
+        h, w = img.shape[:2]
+        self.center = (w // 2, h // 2)
         self.mask = np.zeros(img.shape[:2], dtype=np.uint8)
 
     def on_mouse(self, event, x, y, flags, param):
@@ -355,37 +404,47 @@ class Annotator:
             return
         if event == cv2.EVENT_LBUTTONDOWN:
             self.drawing = True
-            cv2.circle(self.mask, (x, y), self.radius, 255, -1)
+            self.center = (x, y)
         elif event == cv2.EVENT_MOUSEMOVE and self.drawing:
-            cv2.circle(self.mask, (x, y), self.radius, 255, -1)
+            self.center = (x, y)
         elif event == cv2.EVENT_LBUTTONUP:
             self.drawing = False
-            cv2.circle(self.mask, (x, y), self.radius, 255, -1)
-        elif event == cv2.EVENT_RBUTTONDOWN:
-            cv2.circle(self.mask, (x, y), self.radius, 0, -1)
+            self.center = (x, y)
 
     def show(self):
         if self.img is None:
             return False
+        self.mask[:] = 0
+        if self.center is not None:
+            cv2.circle(self.mask, self.center, self.radius, 255, -1)
         overlay = self.img.copy()
         overlay[self.mask > 0] = (0, 165, 255)
         cv2.imshow(self.window, overlay)
         return True
 
-    def compute_params(self) -> Tuple[np.ndarray, Tuple[int, int]]:
-        """Compute Lab center and radius guess from painted mask."""
+    def compute_params(self) -> Tuple[Tuple[int, int], int, int, int]:
+        """
+        Compute HSV range suggestion from the circle mask:
+        - H range: 5%~95% percentile
+        - S min / V min: 10% percentile
+        Returns (h_low, h_high, s_min, v_min).
+        """
         if self.img is None or self.mask is None:
-            return None, (0, 0)
+            return None
         if np.count_nonzero(self.mask) == 0:
-            return None, (0, 0)
-        # Lab mean
-        lab = cv2.cvtColor(self.img, cv2.COLOR_BGR2LAB)
-        pixels = lab[self.mask > 0]
-        lab_center = np.mean(pixels, axis=0)
-        # radius guess from mask area
-        area = np.count_nonzero(self.mask)
-        r = int(np.sqrt(area / np.pi))
-        return lab_center, (r, r)
+            return None
+        hsv = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
+        pixels = hsv[self.mask > 0]
+        if pixels.size == 0:
+            return None
+        h_vals = pixels[:, 0]
+        s_vals = pixels[:, 1]
+        v_vals = pixels[:, 2]
+        h_low = int(np.percentile(h_vals, 5))
+        h_high = int(np.percentile(h_vals, 95))
+        s_min = int(np.percentile(s_vals, 10))
+        v_min = int(np.percentile(v_vals, 10))
+        return (h_low, h_high, s_min, v_min)
 
 
 # ---------- Main loop ----------
@@ -401,6 +460,7 @@ def main() -> None:
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    cap.set(cv2.CAP_PROP_FPS, 30)  # reduce flicker with mains 50/60Hz lighting
     # Initial exposure setup (manual by default)
     apply_exposure(cap, params)
 
@@ -409,11 +469,11 @@ def main() -> None:
     cv2.namedWindow("Edges", cv2.WINDOW_NORMAL)
     cv2.namedWindow("Result", cv2.WINDOW_NORMAL)
 
-    lab_center = np.array([170, 140, 80], dtype=np.int16)
-    clicked_lab = [lab_center]
     mode = "live"  # "live" or "snapshot"
     snapshot_frame = None
     annotator = Annotator()
+    # placeholder to satisfy mouse callback; color now driven by HSV trackbars/annotation
+    clicked_lab = [np.array([0, 0, 0], dtype=np.int16)]
 
     def on_mouse_original(event, x, y, flags, userdata):
         frame_bgr = userdata.get("frame")
@@ -431,6 +491,7 @@ def main() -> None:
 
     frame_idx = 0
     last_dets: List[dict] = []
+    prev_mask_clean = None
 
     try:
         while True:
@@ -445,6 +506,8 @@ def main() -> None:
                     print("从摄像头读取失败")
                     break
                 source_frame = frame
+                if params.mirror:
+                    source_frame = cv2.flip(source_frame, 1)
             else:
                 source_frame = snapshot_frame
                 if source_frame is None:
@@ -457,10 +520,8 @@ def main() -> None:
             # update mouse callback data
             cv2.setMouseCallback("Original", on_mouse_original, {"frame": frame_small})
 
-            # Color masks
-            mask_hsv = hsv_orange_mask(frame_small, params)
-            mask_lab = lab_deltae_mask(frame_small, clicked_lab[0], params.lab_tol)
-            mask_color = cv2.bitwise_or(mask_hsv, mask_lab)
+            # Color mask: HSV only (simplified)
+            mask_color = hsv_orange_mask(frame_small, params)
             if params.suppress_green:
                 mask_color = cv2.bitwise_and(mask_color, suppress_green(frame_small))
 
@@ -471,6 +532,10 @@ def main() -> None:
                 mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_OPEN, kernel, iterations=params.morph_open)
             if params.morph_close > 0:
                 mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel, iterations=params.morph_close)
+            # Temporal smoothing to reduce flicker
+            if prev_mask_clean is not None and prev_mask_clean.shape == mask_clean.shape:
+                mask_clean = cv2.addWeighted(mask_clean, 0.6, prev_mask_clean, 0.4, 0)
+            prev_mask_clean = mask_clean.copy()
 
             # Grayscale for edges
             gray = cv2.cvtColor(frame_small, cv2.COLOR_BGR2GRAY)
@@ -486,6 +551,8 @@ def main() -> None:
             dets = last_dets
             if run_detect:
                 dets = detect_candidates(mask_clean, edges_masked, gray_eq, params)
+                if not dets:
+                    dets = fallback_from_mask(mask_clean, params)
                 dets = nms(dets, iou_thr=params.nms_iou, max_keep=params.nms_keep)
                 if dets and scale != 1.0:
                     mapped = []
@@ -518,6 +585,8 @@ def main() -> None:
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q") or key == 27:
                 break
+            if key == ord("h"):
+                print_params(params)
             if key == ord("k") and (cv2.getWindowProperty("Original", 0) >= 0):
                 # Take snapshot
                 snapshot_frame = source_frame.copy()
@@ -525,16 +594,26 @@ def main() -> None:
                 annotator.set_image(cv2.resize(snapshot_frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA))
                 cv2.namedWindow(annotator.window, cv2.WINDOW_NORMAL)
                 cv2.setMouseCallback(annotator.window, annotator.on_mouse)
+                # Show once to ensure window is realized (macOS sometimes needs this)
+                annotator.show()
                 # Pause in annotate loop until window closed or Enter pressed
                 while True:
                     if not annotator.show():
                         break
-                    k2 = cv2.waitKey(1) & 0xFF
-                    if k2 == 13:  # Enter to compute
-                        lab_center_new, r_guess = annotator.compute_params()
-                        if lab_center_new is not None:
-                            clicked_lab[0] = lab_center_new.astype(np.int16)
-                            print(f"[Annotate] Lab center set to {lab_center_new}, r_guess={r_guess}")
+                    k2 = cv2.waitKey(10) & 0xFF
+                    if k2 == ord("+") or k2 == ord("="):
+                        annotator.radius = min(500, annotator.radius + 2)
+                    if k2 == ord("-") or k2 == ord("_"):
+                        annotator.radius = max(2, annotator.radius - 2)
+                    if k2 == 13:  # Enter to compute HSV suggestion
+                        hsv_suggestion = annotator.compute_params()
+                        if hsv_suggestion is not None:
+                            h_low, h_high, s_min, v_min = hsv_suggestion
+                            cv2.setTrackbarPos("H low", "Controls", max(0, min(179, h_low)))
+                            cv2.setTrackbarPos("H high", "Controls", max(0, min(179, h_high)))
+                            cv2.setTrackbarPos("S min", "Controls", max(0, min(255, s_min)))
+                            cv2.setTrackbarPos("V min", "Controls", max(0, min(255, v_min)))
+                            print(f"[Annotate] HSV set to H[{h_low},{h_high}], Smin={s_min}, Vmin={v_min}")
                         break
                     if k2 == ord("c"):
                         if annotator.mask is not None:
@@ -543,7 +622,8 @@ def main() -> None:
                         break
                 cv2.destroyWindow(annotator.window)
                 mode = "live"
-
+    except KeyboardInterrupt:
+        print("KeyboardInterrupt, exiting...")
     finally:
         cap.release()
         cv2.destroyAllWindows()
