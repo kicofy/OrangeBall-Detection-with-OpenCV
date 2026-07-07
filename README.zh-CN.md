@@ -2,9 +2,9 @@
 
 [English](README.md)
 
-OrangeBall Detection with OpenCV 是为 Wardlaw Hartridge School Robotics Club 小组机器人制作的 OpenCV 橙色高尔夫球识别系统。这个项目的目标是帮助机器人“看到”球在摄像头画面中的位置，从而辅助机器人对准、移动，并最终完成得分相关动作。
+OrangeBall Detection with OpenCV 是为 Wardlaw Hartridge School Robotics Club 机器人制作的 OpenCV 橙色高尔夫球检测项目。它估计球在摄像头画面中的位置，供机器人程序作为视觉参考。
 
-项目使用 OpenCV 的颜色分割和近似圆形检测。主检测程序提供实时 GUI 控件，可以调节 HSV 阈值、LAB 拾色、形态学降噪、光照容忍度和检测开关，方便在教室、实验室或比赛现场不同光照条件下快速调参。
+检测流程基于 OpenCV 颜色分割和简单的近似圆形判断。主程序提供实时控件，可调整 HSV 阈值、LAB 拾色、形态学降噪、光照容忍度和检测开关，方便在不同光照下现场调参。
 
 ## 项目目标
 

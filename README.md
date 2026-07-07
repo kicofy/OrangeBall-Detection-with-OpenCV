@@ -2,9 +2,9 @@
 
 [中文说明](README.zh-CN.md)
 
-OrangeBall Detection with OpenCV is a camera-based orange golf ball detection system built for a Wardlaw Hartridge School Robotics Club team robot. The goal is to help the robot see where the ball is in the camera frame, so the robot can align, move toward the ball, and use that visual cue to support scoring behavior.
+OrangeBall Detection with OpenCV is a camera-based orange golf ball detector built for a Wardlaw Hartridge School Robotics Club robot. It estimates where the ball appears in the camera frame so the robot code can use that position as a visual cue.
 
-The project uses OpenCV color segmentation and circle-like shape validation. The main detector includes live GUI controls for HSV thresholds, LAB color picking, morphology, lighting tolerance, and detection toggles, making it easier to tune the robot vision pipeline under different classroom, lab, or competition lighting conditions.
+The detector uses OpenCV color segmentation with simple circle-like shape checks. The main script includes live controls for HSV thresholds, LAB color picking, morphology, lighting tolerance, and detection toggles, which makes field tuning easier under changing lighting.
 
 ## Project Goals
 
