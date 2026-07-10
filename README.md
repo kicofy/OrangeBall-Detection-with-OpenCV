@@ -7,6 +7,8 @@
     &middot;
     <a href="#quickstart">Quickstart</a>
     &middot;
+    <a href="#features">Features</a>
+    &middot;
     <a href="#tech-stack">Tech Stack</a>
   </p>
 
@@ -21,26 +23,31 @@
   <img src=".github/assets/readme-hero.svg" alt="OrangeBall Detection with OpenCV overview image" width="100%" />
 </p>
 
-## Why This Exists
+## Overview
 
-Robotics vision often fails when lighting changes faster than constants can be edited. This detector exposes HSV/LAB and shape controls live so the mask can be tuned in the field.
+This is the classical computer-vision path for orange-ball detection. It favors fast live tuning over training a model.
 
-## Workflow
-
-- Open a live camera feed.
-- Tune HSV range, saturation, brightness, morphology, and optional LAB color distance.
-- Validate candidate blobs with circularity, fill ratio, and bounding-box shape.
-- Use the detected ball center as a robot steering cue.
-- Keep older experiment scripts for comparison.
+The detector exposes color and shape parameters so field lighting changes can be handled quickly during robotics tests.
 
 ## Features
 
-- Live camera detector for orange golf balls.
-- Interactive controls for threshold and lighting tuning.
-- Shape filtering to reject non-ball orange regions.
-- Experiment scripts for grass/color/circle detector variants.
+- Live camera detector with camera-index fallback logic.
+- HSV/LAB and morphology tuning for lighting changes.
+- Circularity, fill-ratio, and bounding-box filters to reject non-ball blobs.
+- Experiment scripts for grass, color, grayscale, and GUI detector variants.
+- Useful as a lightweight camera cue before heavier learned detection.
+
+## How It Works
+
+1. Open a camera feed with OpenCV.
+2. Build a color mask for likely orange regions.
+3. Clean the mask and extract contours.
+4. Score candidate blobs by geometry.
+5. Return/visualize the ball center for downstream robot logic.
 
 ## Quickstart
+
+Run the project locally with the commands below.
 
 ```bash
 git clone https://github.com/Ha22yX/OrangeBall-Detection-with-OpenCV.git
@@ -51,26 +58,42 @@ pip install -r requirements.txt
 python src/orange_detector.py
 ```
 
-Set `CAM_INDEX` if your camera is not index 0.
+Set `CAM_INDEX=1` or another index if the automatic camera scan picks the wrong device.
+
+## Configuration
+
+| Item | Purpose |
+| --- | --- |
+| `CAM_INDEX` | Force a specific `/dev/videoX` or camera index. |
+| Thresholds | Tune color/morphology constants for the test environment. |
+| Experiments | Use scripts under `experiments/` to compare alternate detectors. |
 
 ## Tech Stack
 
 | Layer | Technology | Role |
 | --- | --- | --- |
 | Vision | OpenCV | Color segmentation and contour filtering. |
-| Math | NumPy | Mask and image coordinate operations. |
+| Math | NumPy | Mask and coordinate operations. |
 | Runtime | Camera feed | Live tuning and annotated output. |
-| Robot use | Image-space center | Steering cue for downstream robot logic. |
+| Robotics | Image-space center | Steering cue for downstream logic. |
 
-## Project Map
+## Project Layout
 
 ```text
 src/orange_detector.py        recommended live detector
 experiments/                   older detector experiments
 requirements.txt               Python dependencies
-README.zh-CN.md                Chinese documentation
+.github/assets/                README overview asset
 ```
 
-## Notes
+## Status
 
-This is the classical CV detector. For learned detection experiments, see YOLO Orange Ball Detection.
+Classical CV experiment. For learned detection, use the YOLO Orange Ball Detection repo.
+
+## Related Projects
+
+- [Yolo-Orange-Ball-detection](https://github.com/Ha22yX/Yolo-Orange-Ball-detection) - YOLO training and inference path for the same object class.
+
+## License
+
+No project-wide open-source license has been declared yet.
