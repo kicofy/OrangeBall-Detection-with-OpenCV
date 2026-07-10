@@ -23,7 +23,22 @@
 
 ## Why This Exists
 
-Robotics vision often fails because lighting changes faster than constants can be edited. This detector exposes HSV/LAB and shape controls live so a team can tune the ball mask in the field.
+Robotics vision often fails when lighting changes faster than constants can be edited. This detector exposes HSV/LAB and shape controls live so the mask can be tuned in the field.
+
+## Workflow
+
+- Open a live camera feed.
+- Tune HSV range, saturation, brightness, morphology, and optional LAB color distance.
+- Validate candidate blobs with circularity, fill ratio, and bounding-box shape.
+- Use the detected ball center as a robot steering cue.
+- Keep older experiment scripts for comparison.
+
+## Features
+
+- Live camera detector for orange golf balls.
+- Interactive controls for threshold and lighting tuning.
+- Shape filtering to reject non-ball orange regions.
+- Experiment scripts for grass/color/circle detector variants.
 
 ## Quickstart
 
@@ -38,13 +53,6 @@ python src/orange_detector.py
 
 Set `CAM_INDEX` if your camera is not index 0.
 
-## Features
-
-- Live camera detection for orange golf balls.
-- HSV controls, optional LAB color picking, morphology, and light tolerance sliders.
-- Shape checks for circularity, fill ratio, and bounding boxes.
-- Older experiments preserved for comparison and tuning.
-
 ## Tech Stack
 
 | Layer | Technology | Role |
@@ -54,7 +62,15 @@ Set `CAM_INDEX` if your camera is not index 0.
 | Runtime | Camera feed | Live tuning and annotated output. |
 | Robot use | Image-space center | Steering cue for downstream robot logic. |
 
+## Project Map
 
-## Project Notes
+```text
+src/orange_detector.py        recommended live detector
+experiments/                   older detector experiments
+requirements.txt               Python dependencies
+README.zh-CN.md                Chinese documentation
+```
 
-This is a classical computer-vision detector. For learned detection experiments, see [Yolo-Orange-Ball-detection](https://github.com/Ha22yX/Yolo-Orange-Ball-detection).
+## Notes
+
+This is the classical CV detector. For learned detection experiments, see YOLO Orange Ball Detection.

@@ -23,7 +23,22 @@
 
 ## 项目价值
 
-机器人视觉经常因为光照变化而失效。本检测器把 HSV/LAB 和形状参数做成实时控制，方便在现场快速调出稳定的橙色球掩膜。
+机器人视觉常常因为光照变化而失效。本检测器把 HSV/LAB 和形状参数做成实时控制，方便在现场调出稳定的橙色球掩膜。
+
+## 工作流
+
+- 打开实时摄像头画面。
+- 调节 HSV 范围、饱和度、亮度、形态学和可选 LAB 色差。
+- 用圆度、填充率和边界框形状验证候选区域。
+- 把检测到的球心作为机器人转向参考。
+- 保留旧实验脚本用于对比。
+
+## 核心功能
+
+- 面向橙色高尔夫球的实时摄像头检测器。
+- 用于阈值和光照调节的交互控制。
+- 通过形状筛选排除非球体橙色区域。
+- 保留草地、颜色、圆形检测等实验变体脚本。
 
 ## 快速开始
 
@@ -38,23 +53,24 @@ python src/orange_detector.py
 
 如果摄像头不是 0 号设备，请设置 `CAM_INDEX`。
 
-## 核心功能
-
-- 对摄像头画面中的橙色高尔夫球进行实时检测。
-- 提供 HSV、可选 LAB 取色、形态学和光照容差滑条。
-- 通过圆度、填充率和边界框形状筛选非球体区域。
-- 保留旧实验脚本，便于对比和调参。
-
 ## 技术栈
 
-| Layer | Technology | Role |
+| 层级 | 技术 | 作用 |
 | --- | --- | --- |
 | 视觉 | OpenCV | 颜色分割和轮廓筛选。 |
 | 数学 | NumPy | 掩膜和图像坐标运算。 |
 | 运行 | Camera feed | 实时调参和标注输出。 |
 | 机器人 | Image-space center | 给下游机器人逻辑提供转向参考。 |
 
+## 项目结构
+
+```text
+src/orange_detector.py        recommended live detector
+experiments/                   older detector experiments
+requirements.txt               Python dependencies
+README.zh-CN.md                Chinese documentation
+```
 
 ## 项目说明
 
-这是传统计算机视觉检测器。学习式检测实验可参考 [Yolo-Orange-Ball-detection](https://github.com/Ha22yX/Yolo-Orange-Ball-detection)。
+这是传统计算机视觉检测器。学习式检测实验可参考 YOLO Orange Ball Detection。
